@@ -1,8 +1,6 @@
 /* SPDX-License-Identifier: LGPL-3.0-or-later */
 /* Copyright (C) 2014 Stony Brook University */
 
-#include <stddef.h> /* must be included before linux/signal.h */
-
 #include <asm/errno.h>
 #include <asm/ioctls.h>
 #include <asm/mman.h>
@@ -12,6 +10,7 @@
 #include <linux/in.h>
 #include <linux/in6.h>
 #include <linux/signal.h>
+#include <stddef.h> /* must be included before linux/signal.h */
 
 #include "cpu.h"
 #include "debug_map.h"
@@ -86,9 +85,9 @@ static long sgx_ocall_mmap_untrusted(void* args) {
     struct ocall_mmap_untrusted* ocall_mmap_args = args;
     void* addr;
 
-    addr = (void*)DO_SYSCALL(mmap, ocall_mmap_args->addr, ocall_mmap_args->size,
-                             ocall_mmap_args->prot, ocall_mmap_args->flags, ocall_mmap_args->fd,
-                             ocall_mmap_args->offset);
+    addr =
+        (void*)DO_SYSCALL(mmap, ocall_mmap_args->addr, ocall_mmap_args->size, ocall_mmap_args->prot,
+                          ocall_mmap_args->flags, ocall_mmap_args->fd, ocall_mmap_args->offset);
     if (IS_PTR_ERR(addr))
         return PTR_TO_ERR(addr);
 
@@ -105,10 +104,8 @@ static long sgx_ocall_munmap_untrusted(void* args) {
 static long sgx_ocall_cpuid(void* args) {
     struct ocall_cpuid* ocall_cpuid_args = args;
     __asm__ volatile("cpuid"
-                     : "=a"(ocall_cpuid_args->values[0]),
-                       "=b"(ocall_cpuid_args->values[1]),
-                       "=c"(ocall_cpuid_args->values[2]),
-                       "=d"(ocall_cpuid_args->values[3])
+                     : "=a"(ocall_cpuid_args->values[0]), "=b"(ocall_cpuid_args->values[1]),
+                       "=c"(ocall_cpuid_args->values[2]), "=d"(ocall_cpuid_args->values[3])
                      : "a"(ocall_cpuid_args->leaf), "c"(ocall_cpuid_args->subleaf)
                      : "memory");
     return 0;
@@ -189,8 +186,22 @@ static long sgx_ocall_fchmod(void* args) {
 }
 
 static long sgx_ocall_fsync(void* args) {
+    {
+        struct timeval tv;
+        DO_SYSCALL(gettimeofday, &tv, NULL);
+        uint64_t microsec = tv.tv_sec * (uint64_t)1000000 + tv.tv_usec;
+        log_error("before host fsync %ld", microsec);
+    }
+
     struct ocall_fsync* ocall_fsync_args = args;
-    return DO_SYSCALL_INTERRUPTIBLE(fsync, ocall_fsync_args->fd);
+    long ret                             = DO_SYSCALL_INTERRUPTIBLE(fsync, ocall_fsync_args->fd);
+    {
+        struct timeval tv;
+        DO_SYSCALL(gettimeofday, &tv, NULL);
+        uint64_t microsec = tv.tv_sec * (uint64_t)1000000 + tv.tv_usec;
+        log_error("after host fsync %ld", microsec);
+    }
+    return ret;
 }
 
 static long sgx_ocall_ftruncate(void* args) {
@@ -221,7 +232,7 @@ static long sgx_ocall_resume_thread(void* args) {
 
 static long sgx_ocall_sched_setaffinity(void* args) {
     struct ocall_sched_setaffinity* ocall_sched_args = args;
-    int tid = get_tid_from_tcs(ocall_sched_args->tcs);
+    int tid                                          = get_tid_from_tcs(ocall_sched_args->tcs);
     if (tid < 0)
         return tid;
 
@@ -231,7 +242,7 @@ static long sgx_ocall_sched_setaffinity(void* args) {
 
 static long sgx_ocall_sched_getaffinity(void* args) {
     struct ocall_sched_getaffinity* ocall_sched_args = args;
-    int tid = get_tid_from_tcs(ocall_sched_args->tcs);
+    int tid                                          = get_tid_from_tcs(ocall_sched_args->tcs);
     if (tid < 0)
         return tid;
 
@@ -255,8 +266,8 @@ static long sgx_ocall_futex(void* args) {
     struct ocall_futex* ocall_futex_args = args;
     long ret;
 
-    struct timespec timeout = { 0 };
-    bool have_timeout = ocall_futex_args->timeout_us != (uint64_t)-1;
+    struct timespec timeout = {0};
+    bool have_timeout       = ocall_futex_args->timeout_us != (uint64_t)-1;
     if (have_timeout) {
         time_get_now_plus_ns(&timeout, ocall_futex_args->timeout_us * TIME_NS_IN_US);
     }
@@ -266,21 +277,21 @@ static long sgx_ocall_futex(void* args) {
      * `FUTEX_WAIT_BITSET` with `FUTEX_BITSET_MATCH_ANY`. */
     uint32_t val3 = 0;
     int priv_flag = ocall_futex_args->op & FUTEX_PRIVATE_FLAG;
-    int op = ocall_futex_args->op & ~FUTEX_PRIVATE_FLAG;
+    int op        = ocall_futex_args->op & ~FUTEX_PRIVATE_FLAG;
     if (op == FUTEX_WAKE) {
-        op = FUTEX_WAKE_BITSET;
+        op   = FUTEX_WAKE_BITSET;
         val3 = FUTEX_BITSET_MATCH_ANY;
     } else if (op == FUTEX_WAIT) {
-        op = FUTEX_WAIT_BITSET;
+        op   = FUTEX_WAIT_BITSET;
         val3 = FUTEX_BITSET_MATCH_ANY;
     } else {
         /* Other operations are not supported atm. */
         return -EINVAL;
     }
 
-    ret = DO_SYSCALL_INTERRUPTIBLE(futex, ocall_futex_args->futex, op | priv_flag,
-                                   ocall_futex_args->val,
-                                   have_timeout ? &timeout : NULL, NULL, val3);
+    ret =
+        DO_SYSCALL_INTERRUPTIBLE(futex, ocall_futex_args->futex, op | priv_flag,
+                                 ocall_futex_args->val, have_timeout ? &timeout : NULL, NULL, val3);
 
     if (have_timeout) {
         int64_t diff = time_ns_diff_from_now(&timeout);
@@ -301,15 +312,15 @@ static long sgx_ocall_socket(void* args) {
 
 static long sgx_ocall_bind(void* args) {
     struct ocall_bind* ocall_bind_args = args;
-    int ret = DO_SYSCALL(bind, ocall_bind_args->fd, ocall_bind_args->addr,
-                         (int)ocall_bind_args->addrlen);
+    int ret =
+        DO_SYSCALL(bind, ocall_bind_args->fd, ocall_bind_args->addr, (int)ocall_bind_args->addrlen);
     if (ret < 0) {
         return ret;
     }
 
-    struct sockaddr_storage addr = { 0 };
-    int addrlen = sizeof(addr);
-    ret = DO_SYSCALL(getsockname, ocall_bind_args->fd, &addr, &addrlen);
+    struct sockaddr_storage addr = {0};
+    int addrlen                  = sizeof(addr);
+    ret                          = DO_SYSCALL(getsockname, ocall_bind_args->fd, &addr, &addrlen);
     if (ret < 0) {
         return ret;
     }
@@ -377,7 +388,7 @@ static long sgx_ocall_listen(void* args) {
 
     if (ocall_listen_args->addr) {
         int addrlen = ocall_listen_args->addrlen;
-        ret = DO_SYSCALL(getsockname, fd, ocall_listen_args->addr, &addrlen);
+        ret         = DO_SYSCALL(getsockname, fd, ocall_listen_args->addr, &addrlen);
         if (ret < 0)
             goto err_fd;
         ocall_listen_args->addrlen = addrlen;
@@ -413,12 +424,12 @@ static long sgx_ocall_accept(void* args) {
     if (ret < 0)
         return ret;
 
-    int fd = ret;
+    int fd                     = ret;
     ocall_accept_args->addrlen = addrlen;
 
     if (ocall_accept_args->local_addrlen > 0) {
         int addrlen = ocall_accept_args->local_addrlen;
-        ret = DO_SYSCALL(getsockname, fd, ocall_accept_args->local_addr, &addrlen);
+        ret         = DO_SYSCALL(getsockname, fd, ocall_accept_args->local_addr, &addrlen);
         if (ret < 0) {
             goto err;
         }
@@ -485,7 +496,7 @@ static long sgx_ocall_connect(void* args) {
 
     if (ocall_connect_args->bind_addr && !ocall_connect_args->bind_addr->sa_family) {
         int addrlen = ocall_connect_args->bind_addrlen;
-        ret = DO_SYSCALL(getsockname, fd, ocall_connect_args->bind_addr, &addrlen);
+        ret         = DO_SYSCALL(getsockname, fd, ocall_connect_args->bind_addr, &addrlen);
         if (ret < 0)
             goto err_fd;
         ocall_connect_args->bind_addrlen = addrlen;
@@ -510,8 +521,8 @@ static long sgx_ocall_connect_simple(void* args) {
     /* Connect succeeded or in progress (EINPROGRESS); in both cases retrieve local name -- host
      * Linux binds the socket to address even in case of EINPROGRESS. */
     int addrlen = sizeof(*ocall_connect_args->addr);
-    int getsockname_ret = DO_SYSCALL(getsockname, ocall_connect_args->fd, ocall_connect_args->addr,
-                                     &addrlen);
+    int getsockname_ret =
+        DO_SYSCALL(getsockname, ocall_connect_args->fd, ocall_connect_args->addr, &addrlen);
     if (getsockname_ret < 0) {
         /* This should never happen, but we have to handle it somehow. */
         return getsockname_ret;
@@ -619,17 +630,18 @@ static long sgx_ocall_poll(void* args) {
     long ret;
 
     struct timespec* timeout = NULL;
-    struct timespec end_time = { 0 };
-    bool have_timeout = ocall_poll_args->timeout_us != (uint64_t)-1;
+    struct timespec end_time = {0};
+    bool have_timeout        = ocall_poll_args->timeout_us != (uint64_t)-1;
     if (have_timeout) {
         uint64_t timeout_ns = ocall_poll_args->timeout_us * TIME_NS_IN_US;
-        timeout = __alloca(sizeof(*timeout));
-        timeout->tv_sec = timeout_ns / TIME_NS_IN_S;
-        timeout->tv_nsec = timeout_ns % TIME_NS_IN_S;
+        timeout             = __alloca(sizeof(*timeout));
+        timeout->tv_sec     = timeout_ns / TIME_NS_IN_S;
+        timeout->tv_nsec    = timeout_ns % TIME_NS_IN_S;
         time_get_now_plus_ns(&end_time, timeout_ns);
     }
 
-    ret = DO_SYSCALL_INTERRUPTIBLE(ppoll, ocall_poll_args->fds, ocall_poll_args->nfds, timeout, NULL);
+    ret =
+        DO_SYSCALL_INTERRUPTIBLE(ppoll, ocall_poll_args->fds, ocall_poll_args->nfds, timeout, NULL);
 
     if (have_timeout) {
         int64_t diff = time_ns_diff_from_now(&end_time);
@@ -688,8 +700,7 @@ static long sgx_ocall_debug_map_remove(void* args) {
 #ifdef DEBUG
     int ret = debug_map_remove(ocall_debug_args->addr);
     if (ret < 0) {
-        log_error("debug_map_remove(%p) failed: %s", ocall_debug_args->addr,
-                  unix_strerror(ret));
+        log_error("debug_map_remove(%p) failed: %s", ocall_debug_args->addr, unix_strerror(ret));
     }
 #else
     __UNUSED(ocall_debug_args);
@@ -841,7 +852,7 @@ static int rpc_thread_loop(void* arg) {
 
         /* call actual function and notify awaiting enclave thread when done */
         sgx_ocall_fn_t f = ocall_table[req->ocall_index];
-        req->result = f(req->buffer);
+        req->result      = f(req->buffer);
 
         /* this code is based on Mutex 2 from Futexes are Tricky */
         int old_lock_state = __atomic_fetch_sub(&req->lock.lock, 1, __ATOMIC_ACQ_REL);
@@ -859,10 +870,9 @@ static int rpc_thread_loop(void* arg) {
 }
 
 int start_rpc(size_t threads_cnt) {
-    g_rpc_queue = (rpc_queue_t*)DO_SYSCALL(mmap, NULL,
-                                           ALIGN_UP(sizeof(rpc_queue_t), PRESET_PAGESIZE),
-                                           PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE,
-                                           -1, 0);
+    g_rpc_queue =
+        (rpc_queue_t*)DO_SYSCALL(mmap, NULL, ALIGN_UP(sizeof(rpc_queue_t), PRESET_PAGESIZE),
+                                 PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
     if (IS_PTR_ERR(g_rpc_queue))
         return -ENOMEM;
 
@@ -876,14 +886,14 @@ int start_rpc(size_t threads_cnt) {
             return -ENOMEM;
 
         void* child_stack_top = stack + RPC_STACK_SIZE;
-        child_stack_top = ALIGN_DOWN_PTR(child_stack_top, 16);
+        child_stack_top       = ALIGN_DOWN_PTR(child_stack_top, 16);
 
         int dummy_parent_tid_field = 0;
-        int ret = clone(rpc_thread_loop, child_stack_top,
-                        CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SYSVSEM |
-                        CLONE_THREAD | CLONE_SIGHAND | CLONE_PTRACE | CLONE_PARENT_SETTID,
-                        /*arg=*/NULL, &dummy_parent_tid_field, /*tls=*/NULL, /*child_tid=*/NULL,
-                        thread_exit);
+        int ret                    = clone(rpc_thread_loop, child_stack_top,
+                                           CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SYSVSEM | CLONE_THREAD |
+                                               CLONE_SIGHAND | CLONE_PTRACE | CLONE_PARENT_SETTID,
+                                           /*arg=*/NULL, &dummy_parent_tid_field, /*tls=*/NULL, /*child_tid=*/NULL,
+                                           thread_exit);
 
         if (ret < 0) {
             DO_SYSCALL(munmap, stack, RPC_STACK_SIZE);
